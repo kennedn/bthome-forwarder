@@ -32,6 +32,7 @@ target_compile_definitions(bthome-websocket-bridge PRIVATE
   MAX_WS_CONNECTIONS=2
   BT_DEVICE_COUNT=4           # How many 
   WIFI_STATUS_POLL_MS=10000   # How often to check wifi is still connected
+  WATCHDOG_MS=30000           # max watchdog poll time before reset
   ENABLE_DEBUG=0              # bthome-websocket-bridge enable debug logging
   )
 

@@ -3,6 +3,7 @@
 #include <string>
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
+#include "hardware/watchdog.h"
 #include "pico_ws_server/web_socket_server.h"
 #include "debug.h"
 #include "btstack.h"
@@ -59,13 +60,13 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
     else if(hci_event_packet_get_type(packet) == GAP_EVENT_ADVERTISING_REPORT) {
         uint8_t bthome_magic[] = {0x02, 0x01, 0x06, 0x11, 0x16, 0xD2, 0xFC};
         data = gap_event_advertising_report_get_data(packet);
+        length = gap_event_advertising_report_get_data_length(packet);
 
-        if (memcmp(data, bthome_magic, count_of(bthome_magic))) {
+        if (!data || length < sizeof(bthome_magic) || memcmp(data, bthome_magic, count_of(bthome_magic))) {
             return;
         }
 
         gap_event_advertising_report_get_address(packet, address);
-        length = gap_event_advertising_report_get_data_length(packet);
 
         std::string hex_address = to_hex_string(address, count_of(address));
         bt_device_map[hex_address] = to_hex_string(&(data[5]), length-5);
@@ -112,7 +113,7 @@ int main() {
   }
   DEBUG("WebSocket server started");
   
-  
+  watchdog_enable(WATCHDOG_MS, 1);
   while (1) {
     // Check WiFI status periodically
     if(cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA) <= 0 && (to_ms_since_boot(get_absolute_time()) - sw_timer) > WIFI_STATUS_POLL_MS) {
@@ -120,5 +121,6 @@ int main() {
       sw_timer = to_ms_since_boot(get_absolute_time());
     }
     cyw43_arch_poll();
+    watchdog_update();
   }
 }
