@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Terminal</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: black;
+            color: #ffffff;
+            font-family: monospace;
+            overflow: hidden;
+        }
+
+        #terminal {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            padding: 5vh;
+            box-sizing: border-box;
+        }
+
+        #output-container {
+            flex: 1; /* Allow the output container to grow and use available space */
+            overflow-y: auto; /* Enable vertical scrolling */
+        }
+
+        pre {
+            margin: 0;
+            font-size: 3vh;
+        }
+
+        input {
+            border: none;
+            background-color: transparent;
+            outline: none;
+            color: #ffffff;
+            font-family: monospace;
+            font-size: 3vh;
+        }
+        
+        #seperator {
+            height: 0.15vh;
+            background-color: #ffffff;
+            margin: 1vh 0;
+        }
+
+        /* Mobile-friendly adjustments */
+        @media (max-width: 768px) {
+            #terminal {
+                padding: 2vh;
+                height: calc(var(--vh, 1vh) * 100);
+            }
+            pre {
+                font-size: 4vh;
+            }
+            input {
+                font-size: 4vh;
+            }
+            #seperator {
+                height: 0.2vh;
+                margin: 2vh 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="terminal">
+        <div id="output-container">
+            <pre id="output"></pre>
+        </div>
+        <div id="seperator"></div>
+        <input type="text" id="input" placeholder=">">
+    </div>
+
+    <script>
+        let resizeWindow = () => {
+            // First we get the viewport height and we multiple it by 1% to get a value for a vh unit
+            let vh = window.innerHeight * 0.01;
+            // Then we set the value in the --vh custom property to the root of the document
+            document.documentElement.style.setProperty('--vh', `${vh}px`);
+        };
+        document.addEventListener('DOMContentLoaded', () => {
+            window.addEventListener('resize', resizeWindow);
+            resizeWindow();
+
+            const socket = new WebSocket(`ws://${window.location.hostname}/`);
+
+            const outputElement = document.getElementById('output');
+            const inputElement = document.getElementById('input');
+            const outputContainer = document.getElementById('output-container');
+            const buffer = [];
+            let bufferIndex = -1;
+
+            // Function to display a message in the terminal
+            function displayMessage(message, isInput) {
+                const prefix = isInput ? '> ' : '< ';
+                outputElement.textContent += prefix + message + '\n';
+                if (isInput) {
+                    buffer.push(message);
+                    bufferIndex = buffer.length;
+                }
+                outputContainer.scrollTop = outputContainer.scrollHeight;
+            }
+
+            // Function to handle WebSocket errors
+            function handleWebSocketError(errorEvent) {
+                displayMessage(`Error: ${errorEvent.message} >`, false);
+            }
+
+            // Function to handle WebSocket open event
+            function handleWebSocketOpen() {
+                displayMessage(`Connected to ${window.location.hostname} >`, false);
+            }
+
+            // Handle incoming messages from the WebSocket server
+            socket.addEventListener('message', (event) => {
+                const message = event.data;
+                displayMessage(`${message}`, false);
+            });
+
+            // Handle WebSocket errors
+            socket.addEventListener('error', handleWebSocketError);
+
+            // Handle WebSocket open event
+            socket.addEventListener('open', handleWebSocketOpen);
+
+            // Handle user input
+            inputElement.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    const command = inputElement.value;
+                    // Remove double escapes and encode as an ArrayBuffer to prevent websocket from re-adding double escapes
+                    // Allows for escape characters such as \r and \n to be sent down the wire unmolested
+                    socket.send(new TextEncoder().encode(JSON.parse(`"${command}"`)));
+                    displayMessage(command, true);
+                    inputElement.value = '';
+                } else if (event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    if (bufferIndex > 0) {
+                        bufferIndex--;
+                        inputElement.value = buffer[bufferIndex];
+                        inputElement.focus(); 
+                        inputElement.setSelectionRange(inputElement.value.length, inputElement.value.length) // Cursor to end
+                    }
+                } else if (event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    if (bufferIndex < buffer.length - 1) {
+                        bufferIndex++;
+                        inputElement.value = buffer[bufferIndex];
+                        inputElement.focus(); 
+                        inputElement.setSelectionRange(inputElement.value.length, inputElement.value.length) // Cursor to end
+                    } else {
+                        bufferIndex = buffer.length;
+                        inputElement.value = '';   
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
