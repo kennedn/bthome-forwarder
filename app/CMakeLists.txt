@@ -10,7 +10,7 @@ target_include_directories(lwipopts_provider INTERFACE ${CMAKE_CURRENT_LIST_DIR}
 target_compile_definitions(lwipopts_provider INTERFACE
   CYW43_HOST_NAME=\"BTHOME_REPEATER\"
   PICO_WS_SERVER_STATIC_HTML_HEX=\"${PICO_WS_SERVER_STATIC_HTML_HEX}\"
-  ENABLE_DEBUG=0      # pico-ws-server enable debug logging
+  # ENABLE_DEBUG=0      # pico-ws-server enable debug logging
   NDEBUG=1          # LWIP disable debug logging
 )
 
@@ -29,11 +29,10 @@ target_link_libraries(bthome-websocket-bridge
 target_compile_definitions(bthome-websocket-bridge PRIVATE
   WIFI_SSID=\"${WIFI_SSID}\"
   WIFI_PASSWORD=\"${WIFI_PASSWORD}\"
-  MAX_WS_CONNECTIONS=2
-  BT_DEVICE_COUNT=4           # How many 
+  MAX_WS_CONNECTIONS=4
   WIFI_STATUS_POLL_MS=10000   # How often to check wifi is still connected
-  WATCHDOG_MS=30000           # max watchdog poll time before reset
-  ENABLE_DEBUG=0              # bthome-websocket-bridge enable debug logging
+  WATCHDOG_MS=10000           # max watchdog poll time before reset
+  # ENABLE_DEBUG=0              # bthome-websocket-bridge enable debug logging
   )
 
 pico_add_extra_outputs(bthome-websocket-bridge)

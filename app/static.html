@@ -24,31 +24,17 @@
         }
 
         #output-container {
-            flex: 1; /* Allow the output container to grow and use available space */
-            overflow-y: auto; /* Enable vertical scrolling */
+            flex: 1;
+            overflow-y: auto;
         }
 
         pre {
             margin: 0;
             font-size: 3vh;
+            white-space: pre-wrap;
+            word-break: break-word;
         }
 
-        input {
-            border: none;
-            background-color: transparent;
-            outline: none;
-            color: #ffffff;
-            font-family: monospace;
-            font-size: 3vh;
-        }
-        
-        #seperator {
-            height: 0.15vh;
-            background-color: #ffffff;
-            margin: 1vh 0;
-        }
-
-        /* Mobile-friendly adjustments */
         @media (max-width: 768px) {
             #terminal {
                 padding: 2vh;
@@ -56,13 +42,6 @@
             }
             pre {
                 font-size: 4vh;
-            }
-            input {
-                font-size: 4vh;
-            }
-            #seperator {
-                height: 0.2vh;
-                margin: 2vh 0;
             }
         }
     </style>
@@ -72,93 +51,112 @@
         <div id="output-container">
             <pre id="output"></pre>
         </div>
-        <div id="seperator"></div>
-        <input type="text" id="input" placeholder=">">
     </div>
 
     <script>
         let resizeWindow = () => {
-            // First we get the viewport height and we multiple it by 1% to get a value for a vh unit
-            let vh = window.innerHeight * 0.01;
-            // Then we set the value in the --vh custom property to the root of the document
+            const vh = window.innerHeight * 0.01;
             document.documentElement.style.setProperty('--vh', `${vh}px`);
         };
+
         document.addEventListener('DOMContentLoaded', () => {
             window.addEventListener('resize', resizeWindow);
             resizeWindow();
 
             const socket = new WebSocket(`ws://${window.location.hostname}/`);
-
             const outputElement = document.getElementById('output');
-            const inputElement = document.getElementById('input');
             const outputContainer = document.getElementById('output-container');
-            const buffer = [];
-            let bufferIndex = -1;
 
-            // Function to display a message in the terminal
-            function displayMessage(message, isInput) {
-                const prefix = isInput ? '> ' : '< ';
-                outputElement.textContent += prefix + message + '\n';
-                if (isInput) {
-                    buffer.push(message);
-                    bufferIndex = buffer.length;
-                }
+            function displayMessage(message) {
+                outputElement.textContent += message + '\n';
                 outputContainer.scrollTop = outputContainer.scrollHeight;
             }
 
-            // Function to handle WebSocket errors
             function handleWebSocketError(errorEvent) {
-                displayMessage(`Error: ${errorEvent.message} >`, false);
+                displayMessage(`< Error: ${errorEvent.message} >`);
             }
 
-            // Function to handle WebSocket open event
             function handleWebSocketOpen() {
-                displayMessage(`Connected to ${window.location.hostname} >`, false);
+                displayMessage(`< Connected to ${window.location.hostname} >`);
             }
 
-            // Handle incoming messages from the WebSocket server
-            socket.addEventListener('message', (event) => {
-                const message = event.data;
-                displayMessage(`${message}`, false);
-            });
+            function formatAddress(hexString) {
+                return hexString
+                    .slice(0, 12)
+                    .toUpperCase()
+                    .match(/.{2}/g)
+                    .join(':');
+            }
 
-            // Handle WebSocket errors
-            socket.addEventListener('error', handleWebSocketError);
+            function fmtUInt(value, width) {
+                return String(value).padStart(width, '0');
+            }
 
-            // Handle WebSocket open event
-            socket.addEventListener('open', handleWebSocketOpen);
+            function fmtScaled(value, decimals) {
+                return value.toFixed(decimals);
+            }
 
-            // Handle user input
-            inputElement.addEventListener('keydown', (event) => {
-                if (event.key === 'Enter') {
-                    event.preventDefault();
-                    const command = inputElement.value;
-                    // Remove double escapes and encode as an ArrayBuffer to prevent websocket from re-adding double escapes
-                    // Allows for escape characters such as \r and \n to be sent down the wire unmolested
-                    socket.send(new TextEncoder().encode(JSON.parse(`"${command}"`)));
-                    displayMessage(command, true);
-                    inputElement.value = '';
-                } else if (event.key === 'ArrowUp') {
-                    event.preventDefault();
-                    if (bufferIndex > 0) {
-                        bufferIndex--;
-                        inputElement.value = buffer[bufferIndex];
-                        inputElement.focus(); 
-                        inputElement.setSelectionRange(inputElement.value.length, inputElement.value.length) // Cursor to end
-                    }
-                } else if (event.key === 'ArrowDown') {
-                    event.preventDefault();
-                    if (bufferIndex < buffer.length - 1) {
-                        bufferIndex++;
-                        inputElement.value = buffer[bufferIndex];
-                        inputElement.focus(); 
-                        inputElement.setSelectionRange(inputElement.value.length, inputElement.value.length) // Cursor to end
-                    } else {
-                        bufferIndex = buffer.length;
-                        inputElement.value = '';   
+            function decodeBTHomeMessage(hexString) {
+                const address = formatAddress(hexString);
+                const payloadHex = hexString.slice(18);
+
+                const bytes = Uint8Array.fromHex(payloadHex);
+                const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+                const status = { address };
+                let i = 0;
+
+                while (i < bytes.length) {
+                    const objectID = bytes[i++];
+
+                    switch (objectID) {
+                        case 0x00: {
+                            status.packet = fmtUInt(bytes[i], 3);
+                            i += 1;
+                            break;
+                        }
+                        case 0x01: {
+                            status.battery = fmtUInt(bytes[i], 2);
+                            i += 1;
+                            break;
+                        }
+                        case 0x02: {
+                            const value = view.getInt16(i, true);
+                            status.temperature = fmtScaled(value * 0.01, 2);
+                            i += 2;
+                            break;
+                        }
+                        case 0x03: {
+                            const value = view.getUint16(i, true);
+                            status.humidity = fmtScaled(value * 0.01, 2);
+                            i += 2;
+                            break;
+                        }
+                        case 0x0C: {
+                            const value = view.getUint16(i, true);
+                            status.voltage = fmtScaled(value * 0.001, 3);
+                            i += 2;
+                            break;
+                        }
+                        default:
+                            throw new Error(`unsupported object ID: 0x${objectID.toString(16).toUpperCase()}`);
                     }
                 }
+
+                return status;
+            }
+
+            socket.addEventListener('message', (event) => {
+                const decoded = decodeBTHomeMessage(String(event.data));
+                displayMessage(
+                    Object.entries(decoded)
+                        .map(([k, v]) => `${k}=${v}`)
+                        .join(' ')
+                );
             });
+
+            socket.addEventListener('error', handleWebSocketError);
+            socket.addEventListener('open', handleWebSocketOpen);
         });
     </script>
 </body>
