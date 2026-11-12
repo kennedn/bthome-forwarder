@@ -10,7 +10,7 @@ target_include_directories(lwipopts_provider INTERFACE ${CMAKE_CURRENT_LIST_DIR}
 target_compile_definitions(lwipopts_provider INTERFACE
   CYW43_HOST_NAME=\"BTHOME_REPEATER\"
   PICO_WS_SERVER_STATIC_HTML_HEX=\"${PICO_WS_SERVER_STATIC_HTML_HEX}\"
-  # ENABLE_DEBUG=0      # pico-ws-server enable debug logging
+  # ENABLE_DEBUG=1      # pico-ws-server enable debug logging
   NDEBUG=1          # LWIP disable debug logging
 )
 
@@ -31,9 +31,11 @@ target_compile_definitions(bthome-websocket-bridge PRIVATE
   WIFI_PASSWORD=\"${WIFI_PASSWORD}\"
   MAX_WS_CONNECTIONS=4
   MAX_CACHED_DEVICES=10
-  WIFI_STATUS_POLL_MS=30000     # How often to check wifi is still connected
-  WATCHDOG_MS=5*60*1000         # max watchdog poll time before reset
-  # ENABLE_DEBUG=0              # bthome-websocket-bridge enable debug logging
+  WIFI_STATUS_POLL_MS=1000     # Check Wi-Fi and IP connectivity every second
+  WIFI_CONNECT_TIMEOUT_MS=30000 # Allow time for association and DHCP
+  HARDWARE_WATCHDOG_MS=8000    # RP2040 watchdog maximum is approximately 8.4 seconds
+  # ENABLE_DEBUG=1              # bthome-websocket-bridge enable debug logging
   )
-
+# pico_enable_stdio_usb(bthome-websocket-bridge 1)
+# pico_enable_stdio_uart(bthome-websocket-bridge 0)
 pico_add_extra_outputs(bthome-websocket-bridge)

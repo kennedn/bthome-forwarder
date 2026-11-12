@@ -12,10 +12,15 @@
 #include "pico_ws_server/web_socket_server.h"
 
 WebSocketServer server(MAX_WS_CONNECTIONS);
-uint32_t sw_timer;
-
-// Updated only when a valid matching BTHome advertisement is seen.
-volatile uint32_t last_valid_bthome_ms = 0;
+// The hardware watchdog also covers hangs during initialization and polling.
+[[noreturn]] static void reboot_device() {
+#ifdef ENABLE_DEBUG
+    stdio_flush();
+    sleep_ms(50);
+#endif
+    watchdog_reboot(0, 0, 0);
+    while (true) tight_loop_contents();
+}
 
 static btstack_packet_callback_registration_t hci_event_callback_registration;
 
@@ -113,7 +118,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
     if (event_type == BTSTACK_EVENT_STATE) {
         if (btstack_event_state_get_state(packet) != HCI_STATE_WORKING) return;
         gap_local_bd_addr(address);
-        printf("BTstack up and running on %s.\n", bd_addr_to_str(address));
+        DEBUG("BTstack up and running on %s.", bd_addr_to_str(address));
         return;
     }
 
@@ -139,21 +144,24 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
         broadcast_entry(entry);  
     }
 
-    // Liveness marker for watchdog.
-    last_valid_bthome_ms = to_ms_since_boot(get_absolute_time());
 }
 
 int main() {
-    sw_timer = 0;
-    last_valid_bthome_ms = to_ms_since_boot(get_absolute_time());
+    watchdog_enable(HARDWARE_WATCHDOG_MS, true);
 
     bt_cache.reserve(MAX_CACHED_DEVICES);
 
     stdio_init_all();
+#ifdef ENABLE_DEBUG
+    // Give USB serial a short window to reconnect after a reset.
+    sleep_ms(1500);
+    DEBUG("Boot: watchdog_reset=%d", watchdog_caused_reboot());
+#endif
+    watchdog_update();
 
     if (cyw43_arch_init() != 0) {
         DEBUG("cyw43_arch_init failed");
-        while (1) tight_loop_contents();
+        reboot_device();
     }
 
     // Active scanning, 100% (scan interval = scan window)
@@ -169,42 +177,53 @@ int main() {
     cyw43_arch_enable_sta_mode();
 
     DEBUG("Connecting to Wi-Fi...");
-    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, WIFI_STATUS_POLL_MS)) {
-        DEBUG("Failed to connect to Wi-Fi");
-        watchdog_reboot(0, 0, 0);
-        while (1) tight_loop_contents();
+    if (cyw43_arch_wifi_connect_async(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK) != 0) {
+        DEBUG("Failed to start Wi-Fi connection, rebooting");
+        reboot_device();
+    }
+
+    // Poll while connecting so a normal DHCP wait can exceed the hardware
+    // watchdog timeout, while a stuck driver still triggers a reset.
+    uint32_t connect_started_ms = to_ms_since_boot(get_absolute_time());
+    while (true) {
+        cyw43_arch_poll();
+        int status = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
+        if (status == CYW43_LINK_UP) break;
+        if (status < 0 ||
+            (uint32_t)(to_ms_since_boot(get_absolute_time()) - connect_started_ms) >= WIFI_CONNECT_TIMEOUT_MS) {
+            DEBUG("Wi-Fi connection failed or timed out (status=%d), rebooting", status);
+            reboot_device();
+        }
+        watchdog_update();
+        sleep_ms(10);
     }
     DEBUG("Connected.");
 
     server.setConnectCallback(on_connect);
     server.setCloseCallback(on_disconnect);
+    server.setMessageCallback(on_message);
 
     bool server_ok = server.startListening(80);
     if (!server_ok) {
         DEBUG("Failed to start WebSocket server");
-        while (1) tight_loop_contents();
+        reboot_device();
     }
     DEBUG("WebSocket server started");
 
-    watchdog_enable(WATCHDOG_MS, 1);
-
-    while (1) {
+    uint32_t last_wifi_check_ms = to_ms_since_boot(get_absolute_time());
+    while (true) {
+        cyw43_arch_poll();
         uint32_t now = to_ms_since_boot(get_absolute_time());
-
-        if ((now - sw_timer) > WIFI_STATUS_POLL_MS) {
-            sw_timer = now;
-            if (cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA) <= 0) {
-                DEBUG("Wi-Fi link lost, rebooting");
-                watchdog_reboot(0, 0, 0);
-                while (1) tight_loop_contents();
+        if ((uint32_t)(now - last_wifi_check_ms) >= WIFI_STATUS_POLL_MS) {
+            last_wifi_check_ms = now;
+            // Association alone is insufficient: require an assigned IP too.
+            int status = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
+            if (status != CYW43_LINK_UP) {
+                DEBUG("Wi-Fi/IP connection lost (status=%d, uptime_ms=%lu), rebooting",
+                      status, (unsigned long)now);
+                reboot_device();
             }
         }
-
-        cyw43_arch_poll();
-
-        // Only pet the watchdog when valid matching BTHome traffic has been seen recently enough.
-        if ((now - last_valid_bthome_ms) < WATCHDOG_MS) {
-            watchdog_update();
-        }
+        watchdog_update();
     }
 }
